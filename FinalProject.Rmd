@@ -1,0 +1,220 @@
+---
+title: "Causal Inference Final"
+output: html_notebook
+---
+
+```{r packages}
+library(haven)
+library(ggdag)
+library(tidyverse)
+library(modelsummary)
+library(mice)
+library(sampleSelection)
+library(AER)
+library(naniar)
+library(dplyr)
+library(kableExtra)
+library(MASS)
+
+
+```
+
+```{r load data}
+replication_data <- read_dta("data.dta")
+```
+
+
+```{r}
+# building the dag
+
+theme_update(text=element_text(size=12,  family="Times New Roman"))
+
+jeannet_dag <- dagify(
+  Retired ~ Age + Education + Income + Children + Left_Right + Born_abroad + Rural + Married + Occupation+ above_early + above_full + Country, 
+  above_early ~ Age + retire_age,
+  above_full ~ Age + retire_age, 
+  retire_age ~ Country,
+  Opinion ~ Retired + Age + Education + Income + Children + Left_Right + Born_abroad + Rural + Married+ Occupation + Country, 
+  exposure = "Retired",
+  outcome = "Opinion", 
+  labels = c(
+    "Age" = "Age", 
+  "Education" = "Education",
+  "Income" = "Income",
+  "Children" = "Has/had children",
+  "Left_Right" = "Left-Right",
+  "Born_abroad" = "Born abroad",
+  "Rural" = "Rural", 
+  "Married" = "Married", 
+  "Opinion" = "Attitudes wrt.\nImmigration",
+  "Retired" = "Retired", 
+  "above_full" = "Above full\nretirement age",
+  "above_early"= "Above early\nretirement age",
+  "Country" = "Country",
+  "retire_age" = "Gov. Retirement Age",
+  "Occupation" = "Occupation"
+  )
+ )
+dag_full <- ggdag(jeannet_dag,stylized = F, text = FALSE, use_labels = 'label') +
+  remove_axes() +
+  remove_grid()
+
+ggsave('dag_full.png', dag_full , width = 8.5, height = 6, units = 'in')
+dag_full
+```
+
+```{r}
+#getting the relevant data
+replication_data <- read_dta('data.dta')
+
+
+working_data <- replication_data %>%
+  select(imbgeco,imtcjob,imbleco, rtrd, eduyrs, agea, agesquared, hinctnta, ever_child, lrscale, brncntr, country,iscoco10, rural, married, above_early, above_full)
+cols <- c('country', 'iscoco10', 'rural','married')
+working_data[cols] <- lapply(working_data[cols], haven::as_factor)  ## as.factor() could also be used
+
+
+
+```
+
+```{r Jeannets Models}
+
+## OLS
+model_econ<- lm(imbgeco ~ rtrd + eduyrs + agea + agesquared + hinctnta + ever_child + lrscale + brncntr + I(country) + I(iscoco10) +I(rural)+ I(married), data = working_data)
+
+model_job <- lm(imtcjob ~ rtrd + eduyrs + agea + agesquared + hinctnta + ever_child + lrscale + brncntr + I(country) + I(iscoco10) +I(rural)+ I(married), data = working_data)
+
+model_taxes <- lm(imbleco ~ rtrd + eduyrs + agea + agesquared + hinctnta + ever_child + lrscale + brncntr + I(country) + I(iscoco10) +I(rural)+ I(married), data = working_data)
+
+modelsummary(list(model_econ, model_job, model_taxes))
+
+
+## IVs
+
+iv_econ <- ivreg(imbgeco ~ rtrd + eduyrs + agea + agesquared + hinctnta + ever_child + lrscale + brncntr + I(country) + I(iscoco10) +I(rural)+ I(married) | above_early + above_full + eduyrs + agea + agesquared + hinctnta + ever_child + lrscale + brncntr + I(country) + I(iscoco10) +I(rural)+ I(married), data = working_data)
+
+iv_job <- ivreg(imtcjob ~ rtrd + eduyrs + agea + agesquared + hinctnta + ever_child + lrscale + brncntr + I(country) + I(iscoco10) +I(rural)+ I(married) | above_early + above_full + eduyrs + agea + agesquared + hinctnta + ever_child + lrscale + brncntr + I(country) + I(iscoco10) +I(rural)+ I(married), data = working_data)
+
+iv_tax <- ivreg(imbleco ~ rtrd + eduyrs + agea + agesquared + hinctnta + ever_child + lrscale + brncntr + I(country) + I(iscoco10) +I(rural)+ I(married) | above_early + above_full + eduyrs + agea + agesquared + hinctnta + ever_child + lrscale + brncntr + I(country) + I(iscoco10) +I(rural)+ I(married), data = working_data)
+
+cm = c(
+    "rtrd" = "Retired", 
+    "agea" = "Age", 
+    "agesquared" = "Age^2",
+  "eduyrs" = "Education",
+  "hinctnta" = "Household Income",
+  "ever_child" = "Has/had children",
+  "lrscale" = "LR-Scale",
+  "brncntr" = "Born abroad",
+  "I(married)1" = "Married", 
+  "I(rural)1" = "Rural",
+    "I(married)2" = "Married", 
+  "I(rural)2" = "Rural",
+  "(Intercept)" = "Constant")
+
+modelsummary(list(iv_econ, iv_job, iv_tax),
+             coef_omit = "country|iscoco"
+             ,coef_map = cm)
+
+```
+
+```{r}
+#plot sources of missingness
+upset_plot <- naniar::gg_miss_upset(working_data,
+                                    nsets = 5,
+                                    nintersects = 10)
+upset_plot
+```
+```{r}
+#understanding where data in income is missing
+discontinuity_income <- ggplot(data = working_data, aes(as.numeric(factor(hinctnta)))) +
+  geom_histogram(stat = "count") +
+  geom_hline(yintercept=0.1*length(working_data$rtrd), color = 'blue') +
+  labs(x = 'Household Income Decile', #removing the overarching x-axis label
+       y = 'Count')
+discontinuity_income
+
+
+ggsave('unequal_income.png', discontinuity_income, width = 9, height = 6, units = 'in')
+```
+```{r MICE}
+#prep mice data
+mice_data <- working_data %>%
+  lapply(haven::as_factor) %>% ## as.factor() could also be used
+  lapply(as.numeric) %>% 
+  #lapply(as.factor) %>%
+  as.data.frame()
+```
+
+
+```{r}
+#mice
+mice_data[c("eduyrs",'agea','agesquared')] <- lapply(mice_data[c("eduyrs",'agea','agesquared')],as.numeric)
+
+# to see results with added column for missing data in household income uncomment here
+# mice_data['missing'] <- is.na(mice_data$hinctnta)
+
+mice_out <- mice(mice_data, m = 5, method = 'pmm')
+```
+
+
+```{r}
+#inspect income distribytion after mice
+miced <- complete(mice_out)
+
+ggplot(miced, aes(hinctnta)) +
+  geom_histogram(stat = 'count') +
+  geom_hline(yintercept=0.1*length(working_data$rtrd), color = 'blue') +
+  labs(x = 'Household Income Decile', #removing the overarching x-axis label
+       y = 'Density')
+  
+```
+```{r}
+#model with mice
+
+mice_model_econ <- with(mice_out, lm(imbgeco ~ rtrd + eduyrs + agea + agesquared + hinctnta + ever_child + lrscale + brncntr + factor(country) + factor(iscoco10) +factor(rural)+ factor(married)))
+
+mice_model_job <- with(mice_out, lm(imtcjob ~ rtrd + eduyrs + agea + agesquared + hinctnta + ever_child + lrscale + brncntr + factor(country) + factor(iscoco10) +factor(rural)+ factor(married)))
+
+mice_model_tax <- with(mice_out, lm(imbleco ~ rtrd + eduyrs + agea + agesquared + hinctnta + ever_child + lrscale + brncntr + factor(country) + factor(iscoco10) +factor(rural)+ factor(married)))
+
+mice_model_iv_econ <- with(mice_out, ivreg(imbgeco ~ rtrd + eduyrs + agea + agesquared + hinctnta + ever_child + lrscale + brncntr + factor(country) + factor(iscoco10) +factor(rural)+ factor(married) | above_early + above_full + eduyrs + agea + agesquared + hinctnta + ever_child + lrscale + brncntr + factor(country) + factor(iscoco10) +factor(rural)+ factor(married)))
+
+mice_model_iv_job <- with(mice_out, ivreg(imtcjob ~ rtrd + eduyrs + agea + agesquared + hinctnta + ever_child + lrscale + brncntr + factor(country) + factor(iscoco10) +factor(rural)+ factor(married) | above_early + above_full + eduyrs + agea + agesquared + hinctnta + ever_child + lrscale + brncntr + factor(country) + factor(iscoco10) +factor(rural)+ factor(married)))
+
+mice_model_iv_tax <- with(mice_out, ivreg(imbleco ~ rtrd + eduyrs + agea + agesquared + hinctnta + ever_child + lrscale + brncntr + factor(country) + factor(iscoco10) +factor(rural)+ factor(married) | above_early + above_full + eduyrs + agea + agesquared + hinctnta + ever_child + lrscale + brncntr + factor(country) + factor(iscoco10) +factor(rural)+ factor(married)))
+```
+
+```{r}
+model_table <- modelsummary(list("OLS" =pool(mice_model_econ),"IV"=  pool(mice_model_iv_econ),
+                  "OLS" =pool(mice_model_job),"IV"=  pool(mice_model_iv_job),
+                  "OLS" =pool(mice_model_tax),"IV"=  pool(mice_model_iv_tax)
+                  ), 
+             estimate = "{estimate} {stars}",
+             coef_omit = 'iscoco10|country',
+             coef_map = cm,
+             output = "latex")
+
+model_table <-model_table %>%
+    
+    # column labels
+  add_header_above(c(" " = 1, "Econ" = 2, "Jobs" = 2, "Tax & Service" = 2)) %>%
+  add_footnote("p-values: + = .1, * = .05, ** = .01, *** = 0.001") 
+
+#retrieving latex table
+model_table
+```
+
+```{r part2}
+part_2 <- replication_data %>%
+  select(rtrd, entry_allow, treatment, iscoco10, country) %>%
+  lapply(haven::as_factor) %>%
+  lapply(as.numeric) %>%
+  as.data.frame
+
+part_2['missing'] <- as.integer(is.na(part_2$entry_allow))
+
+#There is no entry_allow = 8, which would have been the coding for non-response according to the documentation
+summary(part_2)
+```
+
