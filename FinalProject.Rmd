@@ -20,7 +20,7 @@ library(MASS)
 ```
 
 ```{r load data}
-replication_data <- read_dta("data.dta")
+replication_data <- read_dta("replication_files/data.dta")
 ```
 
 
@@ -65,10 +65,8 @@ dag_full
 
 ```{r}
 #getting the relevant data
-replication_data <- read_dta('data.dta')
 
-
-working_data <- replication_data %>%
+working_data <- dplyr::replication_data %>%
   select(imbgeco,imtcjob,imbleco, rtrd, eduyrs, agea, agesquared, hinctnta, ever_child, lrscale, brncntr, country,iscoco10, rural, married, above_early, above_full)
 cols <- c('country', 'iscoco10', 'rural','married')
 working_data[cols] <- lapply(working_data[cols], haven::as_factor)  ## as.factor() could also be used
